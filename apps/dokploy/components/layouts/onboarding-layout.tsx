@@ -16,7 +16,7 @@ export const OnboardingLayout = ({ children, leftPanel }: Props) => {
 	const appName = whitelabeling?.appName || "Dokploy";
 	const appDescription =
 		whitelabeling?.appDescription ||
-		"\u201CThe Open Source alternative to Netlify, Vercel, Heroku.\u201D";
+		"Confeccionamos confianza y calidad para impulsar la (r)evolución responsable de la industria.";
 	const logoUrl =
 		whitelabeling?.loginLogoUrl || whitelabeling?.logoUrl || undefined;
 
