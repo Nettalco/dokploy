@@ -2,6 +2,9 @@ import Link from "next/link";
 import type React from "react";
 import { useWhitelabelingPublic } from "@/utils/hooks/use-whitelabeling";
 import { Logo } from "../shared/logo";
+import { Button } from "@/components/ui/button";
+import { GithubIcon } from "@/components/icons/data-tools-icons";
+import { cn } from "@/lib/utils";
 
 interface Props {
 	children: React.ReactNode;
