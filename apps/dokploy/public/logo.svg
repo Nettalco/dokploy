@@ -3,8 +3,13 @@
    class="h-10 w-auto"
    width="600"
    height="600"
-   fill="currentColor"
    xmlns="http://www.w3.org/2000/svg">
+  <style>
+    path { fill: #082853; }
+    @media (prefers-color-scheme: dark) {
+      path { fill: #3F8CF9; }
+    }
+  </style>
   <path
      id="path4"
      style="display:inline;fill-rule:evenodd;stroke-width:1.05121;stroke-linecap:round;stroke-linejoin:round;stroke-dashoffset:105.827;paint-order:stroke fill markers"
