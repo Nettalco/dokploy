@@ -16,7 +16,9 @@ git fetch origin canary
 git reset --hard origin/canary
 
 # Tag = version + commit corto, para que cada deploy sea identificable y reversible.
-VERSION=$(node -p "require('./apps/dokploy/package.json').version")
+# ponytail: sed y no node — el host solo necesita git y docker, el build va dentro del contenedor.
+VERSION=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' apps/dokploy/package.json | head -1)
+[ -n "$VERSION" ] || { echo "No pude leer version de apps/dokploy/package.json" >&2; exit 1; }
 TAG="${VERSION}-$(git rev-parse --short HEAD)"
 
 echo ">> Construyendo ${IMAGE}:${TAG}"
