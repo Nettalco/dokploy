@@ -13,7 +13,8 @@ interface Props {
 }
 export const OnboardingLayout = ({ children, leftPanel }: Props) => {
 	const { config: whitelabeling } = useWhitelabelingPublic();
-	const appName = whitelabeling?.appName || process.env.NEXT_PUBLIC_APP_NAME || "Dokploy";
+	const appName =
+		whitelabeling?.appName || process.env.NEXT_PUBLIC_APP_NAME || "Dokploy";
 	const appDescription =
 		whitelabeling?.appDescription ||
 		process.env.NEXT_PUBLIC_APP_DESCRIPTION ||
