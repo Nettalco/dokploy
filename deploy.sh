@@ -25,7 +25,12 @@ echo ">> Construyendo ${IMAGE}:${TAG}"
 docker build -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" .
 
 echo ">> Actualizando servicio ${SERVICE}"
-docker service update --image "${IMAGE}:${TAG}" "$SERVICE"
+# RELEASE_TAG=canary desactiva el chequeo de version contra Docker Hub. Sin esto la UI
+# ofrece un boton de update que corre 'docker service update --image dokploy/dokploy:<v>'
+# y reemplazaria esta imagen propia por la oficial, perdiendo el branding Nettalco.
+docker service update \
+	--env-add RELEASE_TAG=canary \
+	--image "${IMAGE}:${TAG}" "$SERVICE"
 
 # ponytail: solo capas huerfanas. NO usar 'prune -a' — borra la imagen anterior
 # y te deja sin rollback. Para limpiar tags viejos a fondo, correr a mano.
@@ -33,3 +38,15 @@ docker container prune -f
 docker image prune -f
 
 echo ">> Desplegado ${IMAGE}:${TAG}"
+
+# Reemplaza el aviso de version de la UI, que quedo desactivado arriba. Informativo:
+# si falla la red o falta el remote, no debe tumbar un despliegue que ya salio bien.
+if git remote get-url upstream >/dev/null 2>&1 || \
+	git remote add upstream https://github.com/Dokploy/dokploy.git 2>/dev/null; then
+	if git fetch upstream canary --quiet 2>/dev/null; then
+		BEHIND=$(git rev-list --count HEAD..upstream/canary)
+		[ "$BEHIND" -eq 0 ] &&
+			echo ">> Al dia con upstream/canary" ||
+			echo ">> Hay ${BEHIND} commits nuevos en upstream/canary"
+	fi
+fi
