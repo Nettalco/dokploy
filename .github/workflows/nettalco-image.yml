@@ -8,7 +8,8 @@ on:
   workflow_dispatch:
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/dokploy
+  # En minuscula a mano: GHCR rechaza mayusculas y github.repository_owner es "Nettalco".
+  IMAGE: ghcr.io/nettalco/dokploy
 
 permissions:
   contents: read
