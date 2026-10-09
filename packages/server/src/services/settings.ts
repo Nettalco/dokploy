@@ -5,7 +5,6 @@ import {
 	execAsyncRemote,
 } from "@dokploy/server/utils/process/execAsync";
 import { and, eq } from "drizzle-orm";
-
 import semver from "semver";
 import { db } from "../db";
 import { compose } from "../db/schema";
@@ -14,6 +13,7 @@ import {
 	initializeTraefikService,
 	type TraefikOptions,
 } from "../setup/traefik-setup";
+import { getCustomImage, getCustomImageUpdate } from "./custom-image";
 export interface IUpdateData {
 	latestVersion: string | null;
 	updateAvailable: boolean;
@@ -48,6 +48,11 @@ export const getServiceImageDigest = async () => {
 export const getUpdateData = async (
 	currentVersion: string,
 ): Promise<IUpdateData> => {
+	const customImage = getCustomImage();
+	if (customImage) {
+		return await getCustomImageUpdate(customImage);
+	}
+
 	try {
 		const baseUrl =
 			"https://hub.docker.com/v2/repositories/dokploy/dokploy/tags";

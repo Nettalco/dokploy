@@ -6,6 +6,8 @@ set -euo pipefail
 
 SERVICE=dokploy
 IMAGE=dokploy-custom
+# Imagen que publica el workflow nettalco-image.yml y que sigue el boton de la UI.
+REGISTRY_IMAGE=${REGISTRY_IMAGE:-ghcr.io/nettalco/dokploy:canary}
 
 if [ "${1:-}" = "rollback" ]; then
 	docker service rollback "$SERVICE"
@@ -25,11 +27,14 @@ echo ">> Construyendo ${IMAGE}:${TAG}"
 docker build -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" .
 
 echo ">> Actualizando servicio ${SERVICE}"
-# RELEASE_TAG=canary desactiva el chequeo de version contra Docker Hub. Sin esto la UI
-# ofrece un boton de update que corre 'docker service update --image dokploy/dokploy:<v>'
-# y reemplazaria esta imagen propia por la oficial, perdiendo el branding Nettalco.
+# DOKPLOY_CUSTOM_IMAGE redirige el chequeo de version y el boton de actualizar de la UI
+# al registry propio. Sin esto, ese boton correria
+# 'docker service update --image dokploy/dokploy:<v>' y reemplazaria esta imagen por la
+# oficial, perdiendo el branding. El token es un PAT con read:packages.
 docker service update \
-	--env-add RELEASE_TAG=canary \
+	--env-add "DOKPLOY_CUSTOM_IMAGE=${REGISTRY_IMAGE}" \
+	--env-add "DOKPLOY_REGISTRY_USER=${GHCR_USER:-}" \
+	--env-add "DOKPLOY_REGISTRY_TOKEN=${GHCR_TOKEN:-}" \
 	--image "${IMAGE}:${TAG}" "$SERVICE"
 
 # ponytail: solo capas huerfanas. NO usar 'prune -a' — borra la imagen anterior

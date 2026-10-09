@@ -13,6 +13,7 @@ import {
 	cleanupVolumes,
 	DEFAULT_UPDATE_DATA,
 	findServerById,
+	getCustomImage,
 	getDockerDiskUsage,
 	getDokployImageTag,
 	getLogCleanupStatus,
@@ -557,12 +558,17 @@ export const settingsRouter = createTRPCRouter({
 
 		const data = await getUpdateData(packageInfo.version);
 		if (data.updateAvailable) {
+			// Fork Nettalco: con imagen propia hay que actualizar a esa, no a la oficial,
+			// o se pierde el branding. --with-registry-auth propaga las credenciales del
+			// registry privado a los nodos del swarm.
+			const customImage = getCustomImage();
 			void spawnAsync("docker", [
 				"service",
 				"update",
 				"--force",
+				...(customImage ? ["--with-registry-auth"] : []),
 				"--image",
-				`dokploy/dokploy:${data.latestVersion}`,
+				customImage || `dokploy/dokploy:${data.latestVersion}`,
 				"dokploy",
 			]);
 			await audit(ctx, {
