@@ -1,5 +1,6 @@
 import {
 	decideUpdate,
+	isAllowedRegistry,
 	parseImage,
 } from "@dokploy/server/services/custom-image";
 import { describe, expect, it } from "vitest";
@@ -18,6 +19,29 @@ describe("parseImage", () => {
 
 	it("asume latest cuando no hay tag", () => {
 		expect(parseImage("ghcr.io/nettalco/dokploy").tag).toBe("latest");
+	});
+});
+
+// El host sale de DOKPLOY_CUSTOM_IMAGE y se usa en la cabecera Authorization, asi que
+// apuntar a otro registry mandaria el PAT fuera del servidor.
+describe("isAllowedRegistry", () => {
+	it("permite el registry propio", () => {
+		expect(
+			isAllowedRegistry(parseImage("ghcr.io/nettalco/dokploy:canary").registry),
+		).toBe(true);
+	});
+
+	it("rechaza cualquier otro host", () => {
+		for (const image of [
+			"evil.example.com/nettalco/dokploy:canary",
+			"ghcr.io.evil.com/nettalco/dokploy:canary",
+			"registry-1.docker.io/nettalco/dokploy:canary",
+		]) {
+			expect(
+				isAllowedRegistry(parseImage(image).registry),
+				`deberia rechazar ${image}`,
+			).toBe(false);
+		}
 	});
 });
 

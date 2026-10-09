@@ -15,6 +15,13 @@ interface CustomImageUpdate {
 	updateAvailable: boolean;
 }
 
+/**
+ * Registries a los que se permite mandar credenciales. DOKPLOY_CUSTOM_IMAGE la define
+ * el operador, y el host se usa tal cual en la cabecera Authorization: si apuntara a
+ * otro lado, el PAT saldria del servidor. Ampliar solo a registries propios.
+ */
+const ALLOWED_REGISTRIES = new Set(["ghcr.io"]);
+
 /** `ghcr.io/nettalco/dokploy:canary`, o vacio para usar el camino de upstream. */
 export const getCustomImage = () => process.env.DOKPLOY_CUSTOM_IMAGE || "";
 
@@ -25,8 +32,12 @@ export const getCustomImage = () => process.env.DOKPLOY_CUSTOM_IMAGE || "";
 export const parseImage = (image: string) => {
 	const [ref, tag = "latest"] = image.split(":");
 	const [registry, ...path] = (ref ?? "").split("/");
-	return { registry, repository: path.join("/"), tag };
+	return { registry: registry ?? "", repository: path.join("/"), tag };
 };
+
+/** Solo para pruebas: el conjunto de registries a los que se mandan credenciales. */
+export const isAllowedRegistry = (registry: string) =>
+	ALLOWED_REGISTRIES.has(registry);
 
 /**
  * Ante la duda no ofrecer el update: un reemplazo innecesario de la imagen es peor
@@ -55,14 +66,31 @@ const getRunningDigest = async () => {
 	return stdout.trim().split("@")[1] || null;
 };
 
+/** Lee el token de archivo si se monto como secreto de swarm; si no, del entorno. */
+const readRegistryToken = async () => {
+	const file = process.env.DOKPLOY_REGISTRY_TOKEN_FILE;
+	if (file) {
+		const { readFile } = await import("node:fs/promises");
+		return (await readFile(file, "utf8")).trim();
+	}
+	return process.env.DOKPLOY_REGISTRY_TOKEN || "";
+};
+
 /**
  * Digest publicado para ese tag. GHCR exige token aunque el paquete sea privado:
- * se pide con un PAT con read:packages en DOKPLOY_REGISTRY_TOKEN.
+ * se pide con un PAT con read:packages.
  */
 const getPublishedDigest = async (image: string) => {
 	const { registry, repository, tag } = parseImage(image);
+
+	if (!ALLOWED_REGISTRIES.has(registry)) {
+		throw new Error(
+			`Registry no permitido: ${registry}. Revisa DOKPLOY_CUSTOM_IMAGE.`,
+		);
+	}
+
 	const user = process.env.DOKPLOY_REGISTRY_USER || "";
-	const token = process.env.DOKPLOY_REGISTRY_TOKEN || "";
+	const token = await readRegistryToken();
 
 	const auth = await fetch(
 		`https://${registry}/token?scope=repository:${repository}:pull&service=${registry}`,
