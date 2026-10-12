@@ -1,5 +1,6 @@
 import {
 	decideUpdate,
+	digestFromRef,
 	isAllowedRegistry,
 	parseImage,
 } from "@dokploy/server/services/custom-image";
@@ -42,6 +43,20 @@ describe("isAllowedRegistry", () => {
 				`deberia rechazar ${image}`,
 			).toBe(false);
 		}
+	});
+});
+
+// Swarm deja el digest en el spec solo si lo resolvio al actualizar; con 'docker service
+// update --image repo:tag' suele quedar el tag pelado y hay que ir al daemon.
+describe("digestFromRef", () => {
+	it("extrae el digest cuando la referencia lo trae", () => {
+		expect(digestFromRef("ghcr.io/nettalco/dokploy:canary@sha256:abc123")).toBe(
+			"sha256:abc123",
+		);
+	});
+
+	it("devuelve null cuando solo hay tag", () => {
+		expect(digestFromRef("ghcr.io/nettalco/dokploy:canary")).toBeNull();
 	});
 });
 
