@@ -14,8 +14,14 @@ if [ "${1:-}" = "rollback" ]; then
 	exit 0
 fi
 
-git fetch origin canary
-git reset --hard origin/canary
+# El reset reescribe este mismo archivo mientras bash lo esta leyendo, asi que la corrida
+# que actualiza el script no puede ser la que lo ejecuta: se relanza una sola vez, ya con
+# la version nueva. Sin esto, un cambio en el script recien surte efecto al segundo deploy.
+if [ -z "${DEPLOY_REEXEC:-}" ]; then
+	git fetch origin canary
+	git reset --hard origin/canary
+	DEPLOY_REEXEC=1 exec "$0" "$@"
+fi
 
 # Tag = version + commit corto, para que cada deploy sea identificable y reversible.
 # ponytail: sed y no node — el host solo necesita git y docker, el build va dentro del contenedor.
@@ -35,10 +41,14 @@ echo ">> Actualizando servicio ${SERVICE}"
 # El paquete en GHCR es publico (hereda la visibilidad del fork), asi que no hacen falta
 # credenciales. GHCR_USER y GHCR_TOKEN solo se necesitan si se vuelve privado; el codigo
 # tambien acepta DOKPLOY_REGISTRY_TOKEN_FILE para leerlo de un secreto de swarm.
+#
+# RELEASE_TAG solo se corrige para que la UI no siga mostrando el valor de la instalacion
+# original; con DOKPLOY_CUSTOM_IMAGE definida ya no interviene en el chequeo.
 docker service update \
 	--env-add "DOKPLOY_CUSTOM_IMAGE=${REGISTRY_IMAGE}" \
 	--env-add "DOKPLOY_REGISTRY_USER=${GHCR_USER:-}" \
 	--env-add "DOKPLOY_REGISTRY_TOKEN=${GHCR_TOKEN:-}" \
+	--env-add "RELEASE_TAG=canary" \
 	--image "${IMAGE}:${TAG}" "$SERVICE"
 
 # ponytail: solo capas huerfanas. NO usar 'prune -a' — borra la imagen anterior
