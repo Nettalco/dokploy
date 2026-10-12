@@ -32,10 +32,9 @@ echo ">> Actualizando servicio ${SERVICE}"
 # 'docker service update --image dokploy/dokploy:<v>' y reemplazaria esta imagen por la
 # oficial, perdiendo el branding.
 #
-# El token (un PAT de solo lectura de paquetes) queda en el spec del servicio, visible
-# con 'docker service inspect'. Es aceptable porque quien llega al socket de Docker ya
-# es root en este host. Para sacarlo de ahi: crear un secreto de swarm y apuntar
-# DOKPLOY_REGISTRY_TOKEN_FILE a /run/secrets/<nombre>, que el codigo ya soporta.
+# El paquete en GHCR es publico (hereda la visibilidad del fork), asi que no hacen falta
+# credenciales. GHCR_USER y GHCR_TOKEN solo se necesitan si se vuelve privado; el codigo
+# tambien acepta DOKPLOY_REGISTRY_TOKEN_FILE para leerlo de un secreto de swarm.
 docker service update \
 	--env-add "DOKPLOY_CUSTOM_IMAGE=${REGISTRY_IMAGE}" \
 	--env-add "DOKPLOY_REGISTRY_USER=${GHCR_USER:-}" \
