@@ -58,12 +58,34 @@ export const decideUpdate = (
 	return { latestVersion: tag, updateAvailable: running !== published };
 };
 
-/** Digest que corre ahora el servicio swarm, o null si la imagen no lo trae. */
+/** Extrae el `sha256:...` de una referencia tipo `imagen:tag@sha256:...`. */
+export const digestFromRef = (ref: string) => ref.trim().split("@")[1] || null;
+
+/**
+ * Digest que corre ahora el servicio. Swarm fija el digest en el spec solo si pudo
+ * resolverlo al actualizar; cuando no, queda la referencia con tag pelado y hay que
+ * preguntarle al daemon por la imagen que efectivamente bajo.
+ */
 const getRunningDigest = async () => {
 	const { stdout } = await execAsync(
 		"docker service inspect dokploy --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}'",
 	);
-	return stdout.trim().split("@")[1] || null;
+	const ref = stdout.trim();
+	const pinned = digestFromRef(ref);
+	if (pinned) {
+		return pinned;
+	}
+
+	const { stdout: repoDigests } = await execAsync(
+		`docker image inspect ${ref} --format '{{join .RepoDigests ","}}'`,
+	);
+	// Puede haber varios si la imagen esta etiquetada en mas de un repo: tomar el nuestro.
+	const [name] = ref.split(":");
+	const match = repoDigests
+		.trim()
+		.split(",")
+		.find((d) => d.startsWith(`${name}@`));
+	return match ? digestFromRef(match) : null;
 };
 
 /** Lee el token de archivo si se monto como secreto de swarm; si no, del entorno. */
