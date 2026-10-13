@@ -106,13 +106,22 @@ REPLICAS=$(docker service inspect "$SERVICE" --format '{{.Spec.Mode.Replicated.R
 
 # Todo con --detach y espera propia: sin eso, 'docker service scale' bloquea en su
 # verificacion de convergencia y se queda colgado indefinidamente contra este servicio.
+# Falla si docker no responde, en vez de informar cero: un error aqui no puede
+# confundirse con "ya no queda ninguna tarea", o seguiriamos adelante con el puerto
+# todavia ocupado.
 tareas_corriendo() {
-	docker service ps "$SERVICE" --filter desired-state=running --quiet 2>/dev/null | grep -c . || true
+	local ids
+	ids=$(docker service ps "$SERVICE" --filter desired-state=running --quiet) || return 1
+	# grep -c devuelve 1 con entrada vacia, que aqui es un conteo valido de cero.
+	printf '%s\n' "$ids" | grep -c '.' || true
 }
 
 esperar() { # esperar <cantidad esperada> <segundos>
+	local n
 	for _ in $(seq 1 "$2"); do
-		[ "$(tareas_corriendo)" -eq "$1" ] && return 0
+		if n=$(tareas_corriendo) && [ "$n" -eq "$1" ]; then
+			return 0
+		fi
 		sleep 1
 	done
 	return 1
