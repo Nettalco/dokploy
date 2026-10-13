@@ -1,0 +1,65 @@
+name: Nettalco Promote
+
+# Mueve la etiqueta :stable a una imagen ya construida, que es la que siguen los
+# servidores de produccion. Se dispara a mano, cuando desarrollo demostro estar bien.
+# No reconstruye nada: produccion corre exactamente el mismo binario que se probo.
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit a promover (SHA completo, el que corre en desarrollo)"
+        required: true
+      channel:
+        description: "Etiqueta destino"
+        required: true
+        default: stable
+        type: choice
+        options: [stable]
+
+env:
+  IMAGE: ghcr.io/nettalco/dokploy
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: nettalco-promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote
+        env:
+          SHA: ${{ inputs.sha }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+
+          if ! docker manifest inspect "${IMAGE}:${SHA}" >/dev/null 2>&1; then
+            echo "::error::No existe ${IMAGE}:${SHA}. Revisa el SHA o espera a que termine su build."
+            exit 1
+          fi
+
+          # imagetools copia el manifiesto sin descargar capas: la imagen promovida es
+          # bit a bit la misma, mismo digest, no una reconstruccion.
+          docker buildx imagetools create -t "${IMAGE}:${CHANNEL}" "${IMAGE}:${SHA}"
+
+          DIGEST=$(docker buildx imagetools inspect "${IMAGE}:${CHANNEL}" \
+            --format '{{.Manifest.Digest}}')
+          echo "### Promovido a \`${CHANNEL}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: \`${SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Digest: \`${DIGEST}\`" >> "$GITHUB_STEP_SUMMARY"

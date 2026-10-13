@@ -1,17 +1,28 @@
 #!/usr/bin/env bash
 # Deploy de Dokploy Nettalco.
-# Uso: ./deploy.sh          -> despliega la imagen que CI publico para el commit actual
+# Uso: ./deploy.sh          -> desarrollo: la imagen del commit actual
+#      ./deploy.sh stable   -> produccion: la ultima imagen promovida
 #      ./deploy.sh local    -> construye en este servidor (respaldo si CI no esta)
 #      ./deploy.sh rollback -> vuelve a la imagen anterior
+#
+# Produccion sigue :stable y no :canary, para que solo corra lo que ya se probo en
+# desarrollo. La etiqueta la mueve el workflow nettalco-promote.yml, a mano.
 set -euo pipefail
 
 SERVICE=dokploy
 REGISTRY=${REGISTRY:-ghcr.io/nettalco/dokploy}
-# Tag movil que sigue el boton de la UI para detectar builds nuevas.
-REGISTRY_IMAGE="${REGISTRY}:canary"
 LOCAL_IMAGE=dokploy-custom
 
 MODE=${1:-registry}
+
+# El boton de la UI sigue el mismo canal que este servidor: en produccion solo ofrece
+# imagenes promovidas, en desarrollo cualquier build nueva de canary.
+if [ "$MODE" = "stable" ]; then
+	CHANNEL=stable
+else
+	CHANNEL=canary
+fi
+REGISTRY_IMAGE="${REGISTRY}:${CHANNEL}"
 
 if [ "$MODE" = "rollback" ]; then
 	docker service rollback "$SERVICE"
@@ -37,6 +48,22 @@ if [ "$MODE" = "local" ]; then
 	docker build -t "$DEPLOY_IMAGE" -t "${LOCAL_IMAGE}:latest" .
 	echo ">> Ojo: una imagen construida aca no tiene digest, asi que el boton de"
 	echo "   actualizar de la UI no va a ofrecer nada hasta volver al registry."
+elif [ "$MODE" = "stable" ]; then
+	# Produccion no mira el git local: corre lo que se promovio, sea cual sea el commit
+	# que tenga este clon (aca el repo solo aporta este script).
+	DEPLOY_IMAGE="${REGISTRY}:stable"
+
+	echo ">> Buscando ${DEPLOY_IMAGE}"
+	if ! docker manifest inspect "$DEPLOY_IMAGE" >/dev/null 2>&1; then
+		cat >&2 <<-MSG
+		Todavia no hay ninguna imagen promovida a :stable.
+
+		Promove una desde Actions > Nettalco Promote, indicando el SHA que ya
+		probaste en desarrollo:
+		  https://github.com/Nettalco/dokploy/actions/workflows/nettalco-promote.yml
+		MSG
+		exit 1
+	fi
 else
 	# Se despliega por SHA y no por el tag movil: deja explicito que commit corre y falla
 	# claro si CI todavia no publico este, en vez de desplegar en silencio uno anterior.
@@ -72,7 +99,7 @@ docker service update \
 	--env-add "DOKPLOY_CUSTOM_IMAGE=${REGISTRY_IMAGE}" \
 	--env-add "DOKPLOY_REGISTRY_USER=${GHCR_USER:-}" \
 	--env-add "DOKPLOY_REGISTRY_TOKEN=${GHCR_TOKEN:-}" \
-	--env-add "RELEASE_TAG=canary" \
+	--env-add "RELEASE_TAG=${CHANNEL}" \
 	--image "$DEPLOY_IMAGE" "$SERVICE"
 
 # ponytail: solo capas huerfanas. NO usar 'prune -a' — borra la imagen anterior
@@ -83,9 +110,11 @@ docker image prune -f
 echo ">> Desplegado ${DEPLOY_IMAGE}"
 
 # Avisa de cambios en upstream, que es lo que el aviso de version de la UI ya no cubre.
+# Solo en desarrollo: en produccion importa lo promovido, no lo que haya en upstream.
 # Informativo: si falla la red o falta el remote, no debe tumbar un deploy que salio bien.
-if git remote get-url upstream >/dev/null 2>&1 ||
-	git remote add upstream https://github.com/Dokploy/dokploy.git 2>/dev/null; then
+if [ "$CHANNEL" = "canary" ] &&
+	{ git remote get-url upstream >/dev/null 2>&1 ||
+		git remote add upstream https://github.com/Dokploy/dokploy.git 2>/dev/null; }; then
 	if git fetch upstream canary --quiet 2>/dev/null; then
 		BEHIND=$(git rev-list --count HEAD..upstream/canary)
 		[ "$BEHIND" -eq 0 ] &&
