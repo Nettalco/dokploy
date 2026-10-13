@@ -9,6 +9,13 @@
 # desarrollo. La etiqueta la mueve el workflow nettalco-promote.yml, a mano.
 set -euo pipefail
 
+# Ruta absoluta antes de movernos: el relanzamiento de mas abajo vuelve a invocar este
+# archivo, y con una ruta relativa dejaria de resolver una vez cambiado el directorio.
+SCRIPT="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+# Todo lo que sigue (git, package.json, el contexto del build) es relativo al repo, asi
+# que el script se ubica solo y funciona desde cualquier directorio.
+cd "$(dirname "$SCRIPT")"
+
 SERVICE=dokploy
 REGISTRY=${REGISTRY:-ghcr.io/nettalco/dokploy}
 LOCAL_IMAGE=dokploy-custom
@@ -35,7 +42,7 @@ fi
 if [ -z "${DEPLOY_REEXEC:-}" ]; then
 	git fetch origin canary
 	git reset --hard origin/canary
-	DEPLOY_REEXEC=1 exec "$0" "$@"
+	DEPLOY_REEXEC=1 exec "$SCRIPT" "$@"
 fi
 
 if [ "$MODE" = "local" ]; then
@@ -150,8 +157,16 @@ esperar "$REPLICAS" 120 ||
 
 # ponytail: solo capas huerfanas. NO usar 'prune -a' — borra la imagen anterior
 # y te deja sin rollback. Para limpiar tags viejos a fondo, correr a mano.
-docker container prune -f
-docker image prune -f
+#
+# Acotado en tiempo y sin cortar el script: el prune compite por el bloqueo del almacen
+# de imagenes mientras arranca el contenedor nuevo y puede quedarse esperando. Un
+# despliegue ya exitoso no puede quedar colgado por una limpieza.
+limpiar() { # limpiar <contenedores|imagenes> <subcomando>
+	timeout 60 docker "$2" prune -f >/dev/null 2>&1 ||
+		echo ">> Limpieza de ${1} omitida (se hara en el proximo deploy)" >&2
+}
+limpiar contenedores container
+limpiar imagenes image
 
 echo ">> Desplegado ${DEPLOY_IMAGE}"
 
