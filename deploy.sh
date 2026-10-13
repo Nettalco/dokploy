@@ -95,7 +95,13 @@ echo ">> Actualizando servicio ${SERVICE}"
 #
 # RELEASE_TAG solo se corrige para que la UI no siga mostrando el valor de la instalacion
 # original; con DOKPLOY_CUSTOM_IMAGE definida ya no interviene en el chequeo.
+#
+# --update-order stop-first es obligatorio aca: el instalador publica el puerto en modo
+# host, asi que con el orden inverso swarm intenta levantar la tarea nueva mientras la
+# vieja todavia ocupa el puerto y la actualizacion se queda colgada en
+# "no suitable node (host-mode port already in use)".
 docker service update \
+	--update-order stop-first \
 	--env-add "DOKPLOY_CUSTOM_IMAGE=${REGISTRY_IMAGE}" \
 	--env-add "DOKPLOY_REGISTRY_USER=${GHCR_USER:-}" \
 	--env-add "DOKPLOY_REGISTRY_TOKEN=${GHCR_TOKEN:-}" \
