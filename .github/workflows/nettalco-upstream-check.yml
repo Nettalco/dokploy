@@ -1,0 +1,99 @@
+name: Nettalco Upstream Check
+
+# Avisa cuando Dokploy publica cambios que este fork todavia no tiene. Reemplaza al aviso
+# de version de la UI, que apagamos porque comparaba contra la imagen oficial.
+# Mantiene un unico issue abierto: lo actualiza en vez de duplicarlo, y lo cierra solo
+# cuando el fork vuelve a estar al dia.
+on:
+  schedule:
+    - cron: "0 14 * * 1" # lunes 09:00 en Lima (UTC-5)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: nettalco-upstream-check
+  cancel-in-progress: false
+
+env:
+  ETIQUETA: upstream-sync
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Historia completa: sin esto no se puede contar contra upstream.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Contar commits nuevos en upstream
+        id: check
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/Dokploy/dokploy.git
+          git fetch upstream canary --quiet
+
+          BEHIND=$(git rev-list --count HEAD..upstream/canary)
+          echo "behind=${BEHIND}" >> "$GITHUB_OUTPUT"
+
+          # Sin merges: los titulos de los PR no dicen nada sobre el cambio en si.
+          git log --oneline --no-merges HEAD..upstream/canary | head -30 > lista.txt
+          echo "Encontrados ${BEHIND} commits nuevos"
+
+      - name: Abrir, actualizar o cerrar el aviso
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BEHIND: ${{ steps.check.outputs.behind }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          ABIERTO=$(gh issue list --repo "$REPO" --label "$ETIQUETA" --state open \
+            --json number --jq '.[0].number // empty')
+
+          if [ "$BEHIND" -eq 0 ]; then
+            if [ -n "$ABIERTO" ]; then
+              gh issue comment "$ABIERTO" --repo "$REPO" \
+                --body "El fork quedo al dia con upstream/canary. Se cierra solo."
+              gh issue close "$ABIERTO" --repo "$REPO"
+            fi
+            echo "Al dia, nada que avisar."
+            exit 0
+          fi
+
+          {
+            echo "El fork esta **${BEHIND} commits** por detras de \`upstream/canary\`."
+            echo
+            echo "<details><summary>Que trae (sin merges, hasta 30)</summary>"
+            echo
+            echo '```'
+            cat lista.txt
+            echo '```'
+            echo
+            echo "</details>"
+            echo
+            echo "Sincronizar es un rebase, pero suele traer conflictos en los archivos"
+            echo "con el branding, asi que conviene hacerlo con calma y verificando."
+            echo
+            echo "---"
+            echo "_Revisado cada lunes. Este aviso se actualiza en lugar de duplicarse,"
+            echo "y se cierra solo cuando el fork vuelve a estar al dia._"
+          } > cuerpo.md
+
+          TITULO="Dokploy: ${BEHIND} commits nuevos en upstream"
+
+          if [ -n "$ABIERTO" ]; then
+            gh issue edit "$ABIERTO" --repo "$REPO" --title "$TITULO" --body-file cuerpo.md
+            echo "Actualizado el issue #${ABIERTO}"
+          else
+            # La etiqueta tiene que existir antes de usarla; crearla es idempotente.
+            gh label create "$ETIQUETA" --repo "$REPO" --color 0366d6 \
+              --description "Avisos de cambios pendientes de upstream" 2>/dev/null || true
+            gh issue create --repo "$REPO" --title "$TITULO" \
+              --label "$ETIQUETA" --body-file cuerpo.md
+          fi
