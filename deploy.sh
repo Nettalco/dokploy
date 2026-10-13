@@ -96,10 +96,19 @@ echo ">> Actualizando servicio ${SERVICE}"
 # RELEASE_TAG solo se corrige para que la UI no siga mostrando el valor de la instalacion
 # original; con DOKPLOY_CUSTOM_IMAGE definida ya no interviene en el chequeo.
 #
-# --update-order stop-first es obligatorio aca: el instalador publica el puerto en modo
-# host, asi que con el orden inverso swarm intenta levantar la tarea nueva mientras la
-# vieja todavia ocupa el puerto y la actualizacion se queda colgada en
-# "no suitable node (host-mode port already in use)".
+# El instalador publica el puerto en modo host. Con una sola replica, swarm no alcanza a
+# liberar ese puerto antes de planificar la tarea nueva, ni siquiera con stop-first, y la
+# actualizacion se cuelga en "no suitable node (host-mode port already in use)". Bajar a
+# cero primero es lo unico que lo garantiza. Implica unos segundos sin panel; con un
+# unico puerto en modo host no hay forma de evitarlo.
+REPLICAS=$(docker service inspect "$SERVICE" --format '{{.Spec.Mode.Replicated.Replicas}}')
+: "${REPLICAS:=1}"
+
+docker service scale "${SERVICE}=0"
+# Si la actualizacion falla, el panel tiene que volver igual, aunque sea con la imagen
+# vieja: nunca dejar el servicio en cero.
+trap 'docker service scale "${SERVICE}=${REPLICAS}" >/dev/null 2>&1 || true' EXIT
+
 docker service update \
 	--update-order stop-first \
 	--env-add "DOKPLOY_CUSTOM_IMAGE=${REGISTRY_IMAGE}" \
@@ -107,6 +116,9 @@ docker service update \
 	--env-add "DOKPLOY_REGISTRY_TOKEN=${GHCR_TOKEN:-}" \
 	--env-add "RELEASE_TAG=${CHANNEL}" \
 	--image "$DEPLOY_IMAGE" "$SERVICE"
+
+docker service scale "${SERVICE}=${REPLICAS}"
+trap - EXIT
 
 # ponytail: solo capas huerfanas. NO usar 'prune -a' — borra la imagen anterior
 # y te deja sin rollback. Para limpiar tags viejos a fondo, correr a mano.
