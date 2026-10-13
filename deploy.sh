@@ -104,12 +104,28 @@ echo ">> Actualizando servicio ${SERVICE}"
 REPLICAS=$(docker service inspect "$SERVICE" --format '{{.Spec.Mode.Replicated.Replicas}}')
 : "${REPLICAS:=1}"
 
-docker service scale "${SERVICE}=0"
-# Si la actualizacion falla, el panel tiene que volver igual, aunque sea con la imagen
-# vieja: nunca dejar el servicio en cero.
-trap 'docker service scale "${SERVICE}=${REPLICAS}" >/dev/null 2>&1 || true' EXIT
+# Todo con --detach y espera propia: sin eso, 'docker service scale' bloquea en su
+# verificacion de convergencia y se queda colgado indefinidamente contra este servicio.
+tareas_corriendo() {
+	docker service ps "$SERVICE" --filter desired-state=running --quiet 2>/dev/null | grep -c . || true
+}
 
-docker service update \
+esperar() { # esperar <cantidad esperada> <segundos>
+	for _ in $(seq 1 "$2"); do
+		[ "$(tareas_corriendo)" -eq "$1" ] && return 0
+		sleep 1
+	done
+	return 1
+}
+
+echo ">> Bajando a cero para liberar el puerto"
+docker service scale --detach "${SERVICE}=0"
+# Si algo falla de aca en mas, el panel tiene que volver igual, aunque sea con la imagen
+# vieja: nunca dejar el servicio en cero.
+trap 'docker service scale --detach "${SERVICE}=${REPLICAS}" >/dev/null 2>&1 || true' EXIT
+esperar 0 60 || { echo "La tarea vieja no termino de bajar." >&2; exit 1; }
+
+docker service update --detach \
 	--update-order stop-first \
 	--env-add "DOKPLOY_CUSTOM_IMAGE=${REGISTRY_IMAGE}" \
 	--env-add "DOKPLOY_REGISTRY_USER=${GHCR_USER:-}" \
@@ -117,8 +133,11 @@ docker service update \
 	--env-add "RELEASE_TAG=${CHANNEL}" \
 	--image "$DEPLOY_IMAGE" "$SERVICE"
 
-docker service scale "${SERVICE}=${REPLICAS}"
+echo ">> Levantando ${REPLICAS} replica(s)"
+docker service scale --detach "${SERVICE}=${REPLICAS}"
 trap - EXIT
+esperar "$REPLICAS" 120 ||
+	echo ">> Ojo: todavia no levanto. Revisa con: docker service ps ${SERVICE}" >&2
 
 # ponytail: solo capas huerfanas. NO usar 'prune -a' — borra la imagen anterior
 # y te deja sin rollback. Para limpiar tags viejos a fondo, correr a mano.
