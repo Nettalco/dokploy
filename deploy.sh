@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Deploy de Dokploy Nettalco.
+# Deploy de Dokploy Nettalco. Manual completo en docs/nettalco/.
 # Uso: ./deploy.sh          -> desarrollo: la imagen del commit actual
 #      ./deploy.sh stable   -> produccion: la ultima imagen promovida
 #      ./deploy.sh local    -> construye en este servidor (respaldo si CI no esta)
-#      ./deploy.sh rollback -> vuelve a la imagen anterior
+#      ./deploy.sh rollback -> vuelve a la imagen que corria antes del ultimo deploy
 #
 # Produccion sigue :stable y no :canary, para que solo corra lo que ya se probo en
 # desarrollo. La etiqueta la mueve el workflow nettalco-promote.yml, a mano.
@@ -19,6 +19,10 @@ cd "$(dirname "$SCRIPT")"
 SERVICE=dokploy
 REGISTRY=${REGISTRY:-ghcr.io/nettalco/dokploy}
 LOCAL_IMAGE=dokploy-custom
+# Imagen que reemplazo el ultimo deploy. Es lo que usa el rollback: 'docker service
+# rollback' no sirve aca porque el deploy cambia el spec en varios pasos y el "spec
+# anterior" seria el intermedio con cero replicas.
+PREVIOUS_LABEL=nettalco.previous-image
 
 MODE=${1:-registry}
 
@@ -31,21 +35,26 @@ else
 fi
 REGISTRY_IMAGE="${REGISTRY}:${CHANNEL}"
 
-if [ "$MODE" = "rollback" ]; then
-	docker service rollback "$SERVICE"
-	exit 0
-fi
-
 # El reset reescribe este mismo archivo mientras bash lo esta leyendo, asi que la corrida
 # que actualiza el script no puede ser la que lo ejecuta: se relanza una sola vez, ya con
 # la version nueva. Sin esto, un cambio en el script recien surte efecto al segundo deploy.
-if [ -z "${DEPLOY_REEXEC:-}" ]; then
+# El rollback no toca el codigo: vuelve a una imagen, no a un commit.
+if [ "$MODE" != "rollback" ] && [ -z "${DEPLOY_REEXEC:-}" ]; then
 	git fetch origin canary
 	git reset --hard origin/canary
 	DEPLOY_REEXEC=1 exec "$SCRIPT" "$@"
 fi
 
-if [ "$MODE" = "local" ]; then
+if [ "$MODE" = "rollback" ]; then
+	DEPLOY_IMAGE=$(docker service inspect "$SERVICE" \
+		--format "{{index .Spec.Labels \"${PREVIOUS_LABEL}\"}}")
+	if [ -z "$DEPLOY_IMAGE" ] || [ "$DEPLOY_IMAGE" = "<no value>" ]; then
+		echo "No hay imagen anterior registrada: este servidor todavia no tuvo un deploy" >&2
+		echo "con la version actual del script, asi que no hay a donde volver." >&2
+		exit 1
+	fi
+	echo ">> Volviendo a ${DEPLOY_IMAGE}"
+elif [ "$MODE" = "local" ]; then
 	# ponytail: sed y no node — el host solo necesita git y docker, el build va adentro.
 	VERSION=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' apps/dokploy/package.json | head -1)
 	[ -n "$VERSION" ] || { echo "No pude leer version de apps/dokploy/package.json" >&2; exit 1; }
@@ -103,6 +112,21 @@ echo ">> Actualizando servicio ${SERVICE}"
 # RELEASE_TAG solo se corrige para que la UI no siga mostrando el valor de la instalacion
 # original; con DOKPLOY_CUSTOM_IMAGE definida ya no interviene en el chequeo.
 #
+# El rollback deja el entorno como esta: si recalculara el canal, un servidor de
+# produccion volveria pasado a canary.
+ENV_ARGS=()
+if [ "$MODE" != "rollback" ]; then
+	ENV_ARGS=(
+		--env-add "DOKPLOY_CUSTOM_IMAGE=${REGISTRY_IMAGE}"
+		--env-add "DOKPLOY_REGISTRY_USER=${GHCR_USER:-}"
+		--env-add "DOKPLOY_REGISTRY_TOKEN=${GHCR_TOKEN:-}"
+		--env-add "RELEASE_TAG=${CHANNEL}"
+	)
+fi
+
+CURRENT_IMAGE=$(docker service inspect "$SERVICE" \
+	--format '{{.Spec.TaskTemplate.ContainerSpec.Image}}')
+
 # El instalador publica el puerto en modo host. Con una sola replica, swarm no alcanza a
 # liberar ese puerto antes de planificar la tarea nueva, ni siquiera con stop-first, y la
 # actualizacion se cuelga en "no suitable node (host-mode port already in use)". Bajar a
@@ -141,12 +165,12 @@ docker service scale --detach "${SERVICE}=0"
 trap 'docker service scale --detach "${SERVICE}=${REPLICAS}" >/dev/null 2>&1 || true' EXIT
 esperar 0 60 || { echo "La tarea vieja no termino de bajar." >&2; exit 1; }
 
+# ${ENV_ARGS[@]+...} y no "${ENV_ARGS[@]}": con set -u, un arreglo vacio da error en bash
+# anteriores a 4.4, y en el rollback queda vacio a proposito.
 docker service update --detach \
 	--update-order stop-first \
-	--env-add "DOKPLOY_CUSTOM_IMAGE=${REGISTRY_IMAGE}" \
-	--env-add "DOKPLOY_REGISTRY_USER=${GHCR_USER:-}" \
-	--env-add "DOKPLOY_REGISTRY_TOKEN=${GHCR_TOKEN:-}" \
-	--env-add "RELEASE_TAG=${CHANNEL}" \
+	--label-add "${PREVIOUS_LABEL}=${CURRENT_IMAGE}" \
+	${ENV_ARGS[@]+"${ENV_ARGS[@]}"} \
 	--image "$DEPLOY_IMAGE" "$SERVICE"
 
 echo ">> Levantando ${REPLICAS} replica(s)"
@@ -173,7 +197,7 @@ echo ">> Desplegado ${DEPLOY_IMAGE}"
 # Avisa de cambios en upstream, que es lo que el aviso de version de la UI ya no cubre.
 # Solo en desarrollo: en produccion importa lo promovido, no lo que haya en upstream.
 # Informativo: si falla la red o falta el remote, no debe tumbar un deploy que salio bien.
-if [ "$CHANNEL" = "canary" ] &&
+if [ "$MODE" != "rollback" ] && [ "$CHANNEL" = "canary" ] &&
 	{ git remote get-url upstream >/dev/null 2>&1 ||
 		git remote add upstream https://github.com/Dokploy/dokploy.git 2>/dev/null; }; then
 	if git fetch upstream canary --quiet 2>/dev/null; then
