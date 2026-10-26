@@ -56,7 +56,9 @@ if [ "$MODE" = "rollback" ]; then
 	echo ">> Volviendo a ${DEPLOY_IMAGE}"
 elif [ "$MODE" = "local" ]; then
 	# ponytail: sed y no node — el host solo necesita git y docker, el build va adentro.
-	VERSION=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' apps/dokploy/package.json | head -1)
+	# sed se detiene en la primera coincidencia ('q'): package.json tiene ademas un script
+	# llamado "version", y cortar con '| head -1' bajo pipefail puede matar sed con SIGPIPE.
+	VERSION=$(sed -n '/"version":/{s/.*"version": *"\([^"]*\)".*/\1/p;q;}' apps/dokploy/package.json)
 	[ -n "$VERSION" ] || { echo "No pude leer version de apps/dokploy/package.json" >&2; exit 1; }
 	DEPLOY_IMAGE="${LOCAL_IMAGE}:${VERSION}-$(git rev-parse --short HEAD)"
 

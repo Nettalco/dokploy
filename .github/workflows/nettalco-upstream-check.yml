@@ -42,7 +42,10 @@ jobs:
           echo "behind=${BEHIND}" >> "$GITHUB_OUTPUT"
 
           # Sin merges: los titulos de los PR no dicen nada sobre el cambio en si.
-          git log --oneline --no-merges HEAD..upstream/canary | head -30 > lista.txt
+          # -n 30 y no '| head -30': con pipefail, head cierra la tuberia a las 30 lineas,
+          # git log recibe SIGPIPE al escribir la siguiente y el paso muere con 141.
+          # Fallaba justo cuando habia mas de 30 novedades, que es cuando mas importa.
+          git log --oneline --no-merges -n 30 HEAD..upstream/canary > lista.txt
           echo "Encontrados ${BEHIND} commits nuevos"
 
       - name: Abrir, actualizar o cerrar el aviso
